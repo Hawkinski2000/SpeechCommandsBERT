@@ -8,6 +8,7 @@ import numpy as np
 import torch
 import torchaudio.transforms as transforms
 from tqdm import tqdm
+from collections import Counter
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -36,6 +37,8 @@ labels_dir = os.path.join(data_dir, "labels")
 # Create the "audio" and "labels" directories if they don't exist
 os.makedirs(audio_dir, exist_ok=True)
 os.makedirs(labels_dir, exist_ok=True)
+
+print(f"Number of examples for each class: {list(Counter(ds["label"]).values())}")
 
 # ----------------------------------------------------------------------------
 # ---- Prepare Spectrograms and Labels ----
