@@ -153,9 +153,7 @@ class BERT(nn.Module):
         loss = None
         if targets is not None:
             loss = F.cross_entropy(logits.view(-1, self.encoder_config.n_classes), targets)
-            predicted_labels = torch.argmax(logits.view(-1, self.encoder_config.n_classes), dim=1)
-            accuracy = (predicted_labels == targets).float().mean()
-        return logits, loss, accuracy
+        return logits, loss
 
     def configure_optimizers(self, weight_decay, learning_rate, device_type):
         # start with all of the candidate parameters (that require grad)
@@ -193,21 +191,24 @@ class DataLoader:
         self.B = B  # Number of examples per batch
         self.process_rank = process_rank
         self.num_processes = num_processes
+
         self.audio_file_path = r"data/audio"
         self.labels_file_path = r"data/labels"
         assert os.path.exists(self.audio_file_path), f"File {self.audio_file_path} not found"
         assert os.path.exists(self.labels_file_path), f"File {self.labels_file_path} not found"
-        self.audio_shards = sorted(os.listdir(self.audio_file_path))
-        self.label_shards = sorted(os.listdir(self.labels_file_path))
+
+        self.audio_shards = sorted([s for s in os.listdir(self.audio_file_path) if split in s])
+        self.label_shards = sorted([s for s in os.listdir(self.labels_file_path) if split in s])
         self.audio_shards = [os.path.join(self.audio_file_path, s) for s in self.audio_shards]
         self.label_shards = [os.path.join(self.labels_file_path, s) for s in self.label_shards]
+
         assert len(self.audio_shards) > 0, f"no audio shards found for split {split}"
         assert len(self.label_shards) > 0, f"no label shards found for split {split}"
-        assert len(self.audio_shards) == len(self.label_shards), f"missing one or more shards for split {split}"
+        assert len(self.audio_shards) == len(self.label_shards), f"missing one or more shards for {split} split"
+        
         if master_process:
-            print(f"found {len(self.audio_shards)} audio shards for split {split}")
-            print(f"found {len(self.label_shards)} label shards for split {split}")
-        self.split = split
+            print(f"found {len(self.audio_shards)} audio shards for {split} split")
+            print(f"found {len(self.label_shards)} label shards for {split} split")
         
         self.reset()
 
@@ -290,7 +291,8 @@ if master_process:
     print(f"=> calculated gradient accumulation steps: {grad_accum_steps}")
 
 train_loader = DataLoader(B=B, process_rank=ddp_rank, num_processes=ddp_world_size, split="train")
-# val_loader = DataLoader(B=B, process_rank=ddp_rank, num_processes=ddp_world_size, split="val")
+val_loader = DataLoader(B=B, process_rank=ddp_rank, num_processes=ddp_world_size, split="validation")
+test_loader = DataLoader(B=B, process_rank=ddp_rank, num_processes=ddp_world_size, split="test")
 
 torch.set_float32_matmul_precision('high')
 
@@ -360,51 +362,88 @@ log_file = os.path.join(log_dir, f"log.txt")
 with open(log_file, "w") as f: # open for writing to clear the file
     pass
 
+# Save model and optimizer state at a checkpoint
+def save_checkpoint(model, optimizer, step, checkpoint_dir="checkpoints"):
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    checkpoint = {
+        'step': step,
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+    }
+    checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint_{step}.pt")
+    torch.save(checkpoint, checkpoint_path)
+    print(f"Checkpoint saved at step {step} to {checkpoint_path}")
+
 def train():
     train_losses = []
-    local_dir = "train_loss"
+    val_losses = []
+    local_dir = "loss_tensors"
     LOSS_DIR = os.path.join(os.path.dirname(__file__), local_dir)
     os.makedirs(LOSS_DIR, exist_ok=True)
     for step in range(start_step, max_steps):
         t0 = time.time()
         last_step = (step == max_steps - 1)
 
-        # Saving model and optimizer state at a checkpoint
-        def save_checkpoint(model, optimizer, step, loss, checkpoint_dir="checkpoints"):
-            os.makedirs(checkpoint_dir, exist_ok=True)
-            checkpoint = {
-                'step': step,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-            }
-            checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint_{step}.pt")
-            torch.save(checkpoint, checkpoint_path)
-            print(f"Checkpoint saved at step {step} to {checkpoint_path}")
+        # once in a while evaluate our validation loss
+        if step > 0 and step % 50 == 0 or last_step:
+            model.eval()
+            val_loader.reset()
+            with torch.no_grad():
+                val_loss_accum = 0.0
+                val_loss_steps = 20
+                for _ in range(val_loss_steps):
+                    encoder_x, y = val_loader.next_batch()
+                    encoder_x, y = encoder_x.to(device), y.to(device)
+                    with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+                        logits, loss = model(encoder_x, y)
+                    loss = loss / val_loss_steps
+                    val_loss_accum += loss.detach()
+            if ddp:
+                dist.all_reduce(val_loss_accum, op=dist.ReduceOp.AVG)
+            if master_process:
+                print(f"validation loss: {val_loss_accum.item():.4f}")
+                with open(log_file, "a") as f:
+                    f.write(f"{step} val {val_loss_accum.item():.4f}\n")
+                val_losses += [val_loss_accum.item()]
+
+                train_loss_tensor = torch.tensor(train_losses, dtype=torch.long)
+                val_loss_tensor = torch.tensor(val_losses, dtype=torch.long)
+                train_loss_path = os.path.join(LOSS_DIR, f"train_loss{step}.pt")
+                val_loss_path = os.path.join(LOSS_DIR, f"train_loss{step}.pt")
+                torch.save(train_loss_tensor, train_loss_path)
+                torch.save(val_loss_tensor, val_loss_path)
+
+                train_steps = list(range(len(train_losses))) # every step
+                val_steps = list(range(0, len(train_losses), 50)) # every 50 steps
+                plt.plot(train_steps, train_losses, label="Train Loss")
+                plt.plot(val_steps, val_losses, label="Validation Loss")
+                plt.xlabel("Steps")
+                plt.ylabel("Loss")
+                plt.title("Training and Validation Loss")
+                plt.savefig(f"loss_curve{step}.png")
+
+                save_checkpoint(model, optimizer, step)
 
         # do one step of the optimization
         model.train()
         optimizer.zero_grad()
-        loss_accum = 0.0
-        accuracy_accum = 0.0
+        train_loss_accum = 0.0
         for micro_step in range(grad_accum_steps):
             encoder_x, y = train_loader.next_batch()
             encoder_x, y = encoder_x.to(device), y.to(device)
             if ddp:
                 model.require_backward_grad_sync = (micro_step == grad_accum_steps - 1)
             with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
-                logits, loss, accuracy = model(encoder_x, y)
-            accuracy = accuracy / grad_accum_steps
-            accuracy_accum += accuracy
+                logits, loss = model(encoder_x, y)
             # we have to scale the loss to account for gradient accumulation,
             # because the gradients just add on each successive backward().
             # addition of gradients corresponds to a SUM in the objective, but
             # instead of a SUM we want MEAN. Scale the loss here so it comes out right
             loss = loss / grad_accum_steps
-            loss_accum += loss.detach()
+            train_loss_accum += loss.detach()
             loss.backward()
         if ddp:
-            dist.all_reduce(loss_accum, op=dist.ReduceOp.AVG)
-            dist.all_reduce(accuracy_accum, op=dist.ReduceOp.AVG)
+            dist.all_reduce(train_loss_accum, op=dist.ReduceOp.AVG)
         norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         # determine and set the learning rate for this iteration
         lr = get_lr(step)
@@ -413,26 +452,15 @@ def train():
         optimizer.step()
         if device_type == "cuda":
             torch.cuda.synchronize() # wait for the GPU to finish work
-        if (master_process and (step > 0 and step % 50 == 0) or last_step):
-            save_checkpoint(model, optimizer, step, loss_accum.item())
-
-            train_loss_tensor = torch.tensor(train_losses, dtype=torch.long)
-            train_loss_path = os.path.join(LOSS_DIR, "train_loss.pt")
-            torch.save(train_loss_tensor, train_loss_path)
-            plt.plot(train_losses)
-            plt.xlabel("Steps")
-            plt.ylabel("Train Loss")
-            plt.title("Training Loss")
-            plt.savefig("training_loss_curve.png")
 
         t1 = time.time()
         dt = t1 - t0 # time difference in seconds
 
         if master_process:
-            print(f"step {step:5d} | accuracy: {accuracy_accum.item():.2%} | loss: {loss_accum.item():.6f} | lr {lr:.4e} | norm: {norm:.4f} | dt: {dt*1000:.2f}ms")
+            print(f"step {step:5d} | loss: {train_loss_accum.item():.6f} | lr {lr:.4e} | norm: {norm:.4f} | dt: {dt*1000:.2f}ms")
             with open(log_file, "a") as f:
-                f.write(f"{step} train {loss_accum.item():.6f}\n")
-            train_losses += [loss_accum.item()]
+                f.write(f"{step} train {train_loss_accum.item():.6f}\n")
+            train_losses += [train_loss_accum.item()]
 
 train()
 
