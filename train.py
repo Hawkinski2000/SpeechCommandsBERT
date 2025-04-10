@@ -385,7 +385,7 @@ def train():
         last_step = (step == max_steps - 1)
 
         # once in a while evaluate our validation loss
-        if step > 0 and step % 50 == 0 or last_step:
+        if step % 5 == 0 or last_step:
             model.eval()
             val_loader.reset()
             with torch.no_grad():
@@ -413,16 +413,20 @@ def train():
                 torch.save(train_loss_tensor, train_loss_path)
                 torch.save(val_loss_tensor, val_loss_path)
 
-                train_steps = list(range(len(train_losses))) # every step
-                val_steps = list(range(0, len(train_losses), 50)) # every 50 steps
-                plt.plot(train_steps, train_losses, label="Train Loss")
-                plt.plot(val_steps, val_losses, label="Validation Loss")
-                plt.xlabel("Steps")
-                plt.ylabel("Loss")
-                plt.title("Training and Validation Loss")
-                plt.savefig(f"loss_curve{step}.png")
+                if step > 0 and step % 50 == 0 or last_step:
+                    train_steps = list(range(len(train_losses))) # every step
+                    val_steps = list(range(0, len(train_losses), 5)) # every 5 steps
+                    val_losses = val_losses[:len(val_steps)]
+                    plt.plot(train_steps, train_losses, label="Train Loss", color="#00ffd0")
+                    plt.plot(val_steps, val_losses, label="Validation Loss", color="#ff00e3")
+                    plt.xlabel("Steps")
+                    plt.ylabel("Loss")
+                    plt.title("Training and Validation Loss")
+                    plt.legend()
+                    plt.savefig(f"loss_curve{step}.png")
+                    plt.clf()
 
-                save_checkpoint(model, optimizer, step)
+                    save_checkpoint(model, optimizer, step)
 
         # do one step of the optimization
         model.train()
