@@ -3,4 +3,6 @@ This project implements a transformer-based model for single-word speech classif
 
 The following loss curve was generated from training for 200 steps on the Google Speech Commands v0.02 dataset, using an NVIDIA GeForce RTX 5070 Ti:
 
-![loss_curve200](loss_curve200.png)
+<p align="center">
+  <img src="loss_curve200.png" alt=loss_curve200/>
+</p>
