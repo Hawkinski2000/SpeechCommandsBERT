@@ -48,29 +48,34 @@ def setup_ddp():
         "master_process": master_process,
     }
 
-torch.manual_seed(1337)
-if torch.cuda.is_available():
-    torch.cuda.manual_seed(1337)
 
-torch.set_float32_matmul_precision('high')
+def main():
+    torch.manual_seed(1337)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(1337)
 
-ddp_config = setup_ddp()
-ddp = ddp_config["ddp"]
-device = ddp_config["device"]
-master_process = ddp_config["master_process"]
-ddp_local_rank = ddp_config["ddp_local_rank"]
+    torch.set_float32_matmul_precision('high')
 
-# create model
-model = BERT(EncoderConfig, device, master_process)
-model.to(device)
-use_compile = True
-if use_compile:
-    model = torch.compile(model)
-if ddp:
-    model = DDP(model, device_ids=[ddp_local_rank])
-raw_model = model.module if ddp else model # always contains the "raw" unwrapped model
+    ddp_config = setup_ddp()
+    ddp = ddp_config["ddp"]
+    device = ddp_config["device"]
+    master_process = ddp_config["master_process"]
+    ddp_local_rank = ddp_config["ddp_local_rank"]
 
-train(model, raw_model, ddp_config)
+    # create model
+    model = BERT(EncoderConfig, device, master_process)
+    model.to(device)
+    use_compile = True
+    if use_compile:
+        model = torch.compile(model)
+    if ddp:
+        model = DDP(model, device_ids=[ddp_local_rank])
+    raw_model = model.module if ddp else model # always contains the "raw" unwrapped model
 
-if ddp:
-    destroy_process_group()
+    train(model, raw_model, ddp_config)
+
+    if ddp:
+        destroy_process_group()
+
+if __name__ == '__main__':
+    main()
