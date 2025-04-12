@@ -53,7 +53,6 @@ def train(model, raw_model, ddp_config):
 
     train_loader = DataLoader(B=B, process_rank=ddp_rank, num_processes=ddp_world_size, split="train", device=device, master_process=master_process)
     val_loader = DataLoader(B=B, process_rank=ddp_rank, num_processes=ddp_world_size, split="validation", device=device, master_process=master_process)
-    test_loader = DataLoader(B=B, process_rank=ddp_rank, num_processes=ddp_world_size, split="test", device=device, master_process=master_process)
 
     device_type = "cuda" if device.startswith("cuda") else "cpu"
     # optimize!

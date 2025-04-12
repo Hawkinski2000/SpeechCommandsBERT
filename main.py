@@ -5,6 +5,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from config import EncoderConfig
 from model import BERT
 from train import train
+from evaluate import evaluate
 
 
 # simple launch:
@@ -72,7 +73,12 @@ def main():
         model = DDP(model, device_ids=[ddp_local_rank])
     raw_model = model.module if ddp else model # always contains the "raw" unwrapped model
 
-    train(model, raw_model, ddp_config)
+    choice = input("Enter 't' to train, or 'e' to evaluate: ")
+    
+    if choice == 't':
+        train(model, raw_model, ddp_config)
+    if choice == 'e':
+        evaluate(model, raw_model, ddp_config)
 
     if ddp:
         destroy_process_group()

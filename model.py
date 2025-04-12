@@ -197,8 +197,8 @@ class DataLoader:
 
     def reset(self):
         self.current_shard = 0
-        self.spectrograms = torch.load(self.audio_shards[self.current_shard], weights_only=True)
-        self.labels = torch.load(self.label_shards[self.current_shard], weights_only=True).to(dtype=torch.long)
+        self.spectrograms = torch.load(self.audio_shards[self.current_shard], map_location=self.device, weights_only=True)
+        self.labels = torch.load(self.label_shards[self.current_shard], map_location=self.device, weights_only=True).to(dtype=torch.long)
         self.current_position = self.B * self.process_rank
 
     def next_batch(self):
@@ -214,8 +214,8 @@ class DataLoader:
         # if loading the next batch would be out of bounds, advance to next shard
         if self.current_position + (self.B * self.num_processes + 1) > len(self.spectrograms):
             self.current_shard = (self.current_shard + 1) % len(self.audio_shards)
-            self.spectrograms = torch.load(self.audio_shards[self.current_shard], weights_only=True)
-            self.labels = torch.load(self.label_shards[self.current_shard], weights_only=True).to(dtype=torch.long)
+            self.spectrograms = torch.load(self.audio_shards[self.current_shard], map_location=self.device, weights_only=True)
+            self.labels = torch.load(self.label_shards[self.current_shard], map_location=self.device, weights_only=True).to(dtype=torch.long)
             self.current_position = self.B * self.process_rank
 
         return encoder_x, y
