@@ -9,7 +9,7 @@ class EncoderConfig:
     n_embd: int = 512 # embedding dimension
     n_mels: int = 80
     n_ctx: int = (block_size) // 2 + 1 # sequence length after 2x Conv1D layers
-    n_classes: int = 35 # number of speech command classes
+    n_classes: int = 36 # number of speech command classes
     attn_pdrop: float = 0.1
     resid_pdrop: float = 0.1
     mlp_pdrop: float = 0.1
