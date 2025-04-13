@@ -126,17 +126,19 @@ class BERT(nn.Module):
         # forward the spectrograms through the Conv1D + GELU layers
         encoder_x = F.gelu(self.transformer.encoder_conv1(spectrogram))
         encoder_x = F.gelu(self.transformer.encoder_conv2(encoder_x))
-        encoder_x = encoder_x.permute(0, 2, 1)
+        encoder_x = encoder_x.permute(0, 2, 1) # (B, 51, n_embd)
 
         # forward the spectrograms through the sinusoidal position embedding
-        encoder_x = (encoder_x + self.positional_embedding).to(encoder_x.dtype) # (64, 512, 1501)
+        encoder_x = (encoder_x + self.positional_embedding).to(encoder_x.dtype) # (B, 51, n_embd)
 
         for encoder_block in self.transformer.encoder_h:
             encoder_x = encoder_block(encoder_x)
 
         # forward the final layernorm and the classifier
-        encoder_x = self.transformer.ln_f(encoder_x[:, :1, :]) # (B, 1, n_embd)
-        logits = self.lm_head(encoder_x) # (B, 1(CLS token), 35(classes))
+        # The first time step is taken out of the sequence of 51, similar to a "CLS" token in BERT models.
+        encoder_x = encoder_x[:, :1, :].squeeze(1) # (B, n_embd)
+        encoder_x = self.transformer.ln_f(encoder_x)
+        logits = self.lm_head(encoder_x) # (B, 36)
         loss = None
         if targets is not None:
             loss = F.cross_entropy(logits.view(-1, self.encoder_config.n_classes), targets)
