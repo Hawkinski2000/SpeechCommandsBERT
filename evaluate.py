@@ -2,8 +2,9 @@ import torch
 import os
 from model import DataLoader
 import torch.distributed as dist
+import numpy as np
+from sklearn.metrics import ConfusionMatrixDisplay, classification_report, accuracy_score
 import matplotlib.pyplot as plt
-from sklearn.metrics import ConfusionMatrixDisplay
 
 
 def evaluate(model, raw_model, ddp_config):
@@ -61,6 +62,17 @@ def evaluate(model, raw_model, ddp_config):
 
         y_true = torch.cat(y_true).cpu().numpy()
         y_pred = torch.cat(y_pred).cpu().numpy()
-        print(len(y_pred))
-        ConfusionMatrixDisplay.from_predictions(y_true, y_pred)
+        mask = np.isin(y_true, list(range(10)))
+        y_true_filtered = y_true[mask]
+        y_pred_filtered = y_pred[mask]
+
+        accuracy = accuracy_score(y_true_filtered, y_pred_filtered)
+        print(f"Accuracy: {accuracy:.2%}")
+
+        report = classification_report(y_true_filtered, y_pred_filtered, labels=list(range(10)))
+        with open("classification_report.txt", "w") as f:
+            f.write(f"Accuracy: {accuracy:.2%}\n\n")
+            f.write(report)
+
+        ConfusionMatrixDisplay.from_predictions(y_true_filtered, y_pred_filtered, labels=list(range(10)))
         plt.savefig(f"confusion_matrix.png")
