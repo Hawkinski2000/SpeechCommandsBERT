@@ -1,32 +1,37 @@
 import os
+
 import torch
 from torch.distributed import init_process_group, destroy_process_group
 from torch.nn.parallel import DistributedDataParallel as DDP
+
 from config import EncoderConfig
 from model import BERT
 from train import train
 from evaluate import evaluate
 
 
-# simple launch:
-# python main.py
-# DDP launch for e.g. 8 GPUs:
-# torchrun --standalone --nproc_per_node=8 main.py
-# torchrun command sets the env variables RANK, LOCAL_RANK, and WORLD_SIZE
+"""
+simple launch:
+    python main.py
+
+DDP launch for e.g. 8 GPUs:
+    torchrun --standalone --nproc_per_node=8 main.py
+
+torchrun command sets the env variables RANK, LOCAL_RANK, and WORLD_SIZE
+"""
 
 
 def setup_ddp():
-    ddp = int(os.environ.get('RANK', -1)) != -1 # is this a ddp run?
+    ddp = int(os.environ.get('RANK', -1)) != -1
     if ddp:
-        # use of DDP atm demands CUDA, we set the device appropriately according to rank
-        assert torch.cuda.is_available(), "for now i think we need CUDA for DDP"
+        assert torch.cuda.is_available(), "CUDA is required for DDP"
         init_process_group(backend='nccl')
         ddp_rank = int(os.environ['RANK'])
         ddp_local_rank = int(os.environ['LOCAL_RANK'])
         ddp_world_size = int(os.environ['WORLD_SIZE'])
         device = f'cuda:{ddp_local_rank}'
         torch.cuda.set_device(device)
-        master_process = ddp_rank == 0 # this process will do logging, checkpointing etc.
+        master_process = ddp_rank == 0
     else:
         # vanilla, non-DDP run
         ddp_rank = 0
@@ -37,7 +42,10 @@ def setup_ddp():
         device = "cpu"
         if torch.cuda.is_available():
             device = "cuda"
-        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        elif (
+            hasattr(torch.backends, "mps")
+            and torch.backends.mps.is_available()
+        ):
             device = "mps"
         print(f"using device: {device}")
     return {
@@ -71,10 +79,9 @@ def main():
         model = torch.compile(model)
     if ddp:
         model = DDP(model, device_ids=[ddp_local_rank])
-    raw_model = model.module if ddp else model # always contains the "raw" unwrapped model
+    raw_model = model.module if ddp else model
 
     choice = input("Enter 't' to train, or 'e' to evaluate: ")
-    
     if choice == 't':
         train(model, raw_model, ddp_config)
     if choice == 'e':
@@ -82,6 +89,7 @@ def main():
 
     if ddp:
         destroy_process_group()
+
 
 if __name__ == '__main__':
     main()
