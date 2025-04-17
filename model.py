@@ -1,10 +1,9 @@
-import os
 import inspect
-from dataclasses import dataclass
 
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
+from torch.nn.parallel import DistributedDataParallel as DDP
 import numpy as np
 
 
@@ -76,17 +75,7 @@ class EncoderBlock(nn.Module):
         encoder_x = encoder_x + self.self_attn(self.ln_1(encoder_x))
         encoder_x = encoder_x + self.mlp(self.ln_2(encoder_x))
         return encoder_x
-
-def sinusoids(length, channels, max_timescale=1000):
-    # Returns sinusoids for positional embedding
-    assert channels % 2 == 0
-    log_timescale_increment = np.log(max_timescale) / (channels // 2 - 1)
-    inv_timescales = torch.exp(
-        -log_timescale_increment* torch.arange(channels // 2))
-    scaled_time = torch.arange((length)[:, np.newaxis]
-                               * inv_timescales[np.newaxis, :])
-    return torch.cat([torch.sin(scaled_time), torch.cos(scaled_time)], dim=1)
-
+    
 
 class BERT(nn.Module):
 
@@ -96,8 +85,8 @@ class BERT(nn.Module):
         self.device = device
         self.master_process = master_process
 
-        encoder_pe = sinusoids(self.encoder_config.n_ctx,
-                               self.encoder_config.n_embd)
+        encoder_pe = self.sinusoids(self.encoder_config.n_ctx,
+                                    self.encoder_config.n_embd)
         self.register_buffer("positional_embedding", encoder_pe)
         self.transformer = nn.ModuleDict(dict(
             encoder_conv1 = nn.Conv1d(self.encoder_config.n_mels,
@@ -111,7 +100,7 @@ class BERT(nn.Module):
                                       padding=1),
             encoder_h = nn.ModuleList(
                 [EncoderBlock(self.encoder_config)
-                 for _ in range(self.encoder_config.n_layer)]),
+                    for _ in range(self.encoder_config.n_layer)]),
             ln_f = nn.LayerNorm(self.encoder_config.n_embd),
         ))
         self.lm_head = nn.Linear(self.encoder_config.n_embd,
@@ -122,6 +111,23 @@ class BERT(nn.Module):
 
         # init params
         self.apply(self._init_weights)
+
+    # Returns sinusoids for positional embedding
+    def sinusoids(self, length, channels, max_timescale=1000):
+        
+        assert channels % 2 == 0
+        
+        log_timescale_increment = np.log(max_timescale) / (channels // 2 - 1)
+
+        range_values = torch.arange(channels // 2)
+        inv_timescales = torch.exp(-log_timescale_increment * range_values)
+
+        time_steps = torch.arange(length)[:, np.newaxis]
+        scaled_time = time_steps * inv_timescales[np.newaxis, :]
+
+        return torch.cat(
+            [torch.sin(scaled_time), torch.cos(scaled_time)], dim=1
+        )
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
@@ -137,8 +143,9 @@ class BERT(nn.Module):
     def forward(self, spectrogram, targets=None):
         # spectrogram is of shape (B, T)
         encoder_T = spectrogram.size()[1]
-        assert encoder_T <= (self.encoder_config.block_size,
-                             f"Cannot forward sequence of length {encoder_T}")
+        assert encoder_T <= self.encoder_config.block_size, (
+            f"Cannot forward sequence of length {encoder_T}"
+        )
         
         # forward the spectrograms through the Conv1D + GELU layers
         encoder_x = F.gelu(self.transformer.encoder_conv1(spectrogram))
@@ -183,10 +190,10 @@ class BERT(nn.Module):
         num_nodecay_params = sum(p.numel() for p in nodecay_params)
         if self.master_process:
             print(f"num decayed parameter tensors: "
-                  "{len(decay_params)}, with {num_decay_params:,} parameters")
+                  f"{len(decay_params)}, with {num_decay_params:,} params")
             print(f"num non-decayed parameter tensors: "
-                  "{len(nodecay_params)}, "
-                  "with {num_nodecay_params:,} parameters")
+                  f"{len(nodecay_params)}, "
+                  f"with {num_nodecay_params:,} params")
         # Create AdamW optimizer and use the fused version if it is available
         fused_available = 'fused' in inspect.signature(
             torch.optim.AdamW).parameters
@@ -199,94 +206,28 @@ class BERT(nn.Module):
                                       eps=1e-8,
                                       fused=use_fused)
         return optimizer
+    
 
+def build_model(ddp_config, config):
+    torch.manual_seed(1337)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(1337)
 
-class DataLoader:
-    def __init__(self,
-                 B,
-                 process_rank,
-                 num_processes,
-                 split, device,
-                 master_process):
-        self.B = B  # Number of examples per batch
-        self.process_rank = process_rank
-        self.num_processes = num_processes
-        self.device = device
-        self.master_process = master_process
-        
-        self.audio_file_path = r"data/audio"
-        self.labels_file_path = r"data/labels"
-        assert os.path.exists(self.audio_file_path), (
-            f"File{self.audio_file_path} not found")
-        assert os.path.exists(self.labels_file_path), (
-            f"File {self.labels_file_path} not found")
+    torch.set_float32_matmul_precision('high')
 
-        self.audio_shards = sorted(
-            [s for s in os.listdir(self.audio_file_path) if split in s])
-        self.label_shards = sorted(
-            [s for s in os.listdir(self.labels_file_path) if split in s])
-        self.audio_shards = [os.path.join(self.audio_file_path, s)
-                             for s in self.audio_shards]
-        self.label_shards = [os.path.join(self.labels_file_path, s)
-                             for s in self.label_shards]
+    ddp = ddp_config["ddp"]
+    device = ddp_config["device"]
+    master_process = ddp_config["master_process"]
+    ddp_local_rank = ddp_config["ddp_local_rank"]
 
-        assert len(self.audio_shards) > 0, (
-            f"no audio shards found for split {split}")
-        assert len(self.label_shards) > 0, (
-            f"no label shards found for split {split}")
-        assert len(self.audio_shards) == len(self.label_shards), (
-            f"missing one or more shards for {split} split")
-        
-        if master_process:
-            print(f"found {len(self.audio_shards)} "
-                  "audio shards for {split} split")
-            print(f"found {len(self.label_shards)} "
-                  "label shards for {split} split")
-        
-        self.reset()
+    # create model
+    model = BERT(config, device, master_process)
+    model.to(device)
+    use_compile = True
+    if use_compile:
+        model = torch.compile(model)
+    if ddp:
+        model = DDP(model, device_ids=[ddp_local_rank])
+    raw_model = model.module if ddp else model
 
-    def reset(self):
-        self.current_shard = 0
-        self.spectrograms = torch.load(self.audio_shards[self.current_shard],
-                                       map_location=self.device, 
-                                       weights_only=True)
-        self.labels = torch.load(self.label_shards[self.current_shard], 
-                                 map_location=self.device, 
-                                 weights_only=True).to(dtype=torch.long)
-        self.current_position = self.B * self.process_rank
-
-    def next_batch(self):
-        # Spectrograms
-        encoder_x = self.spectrograms[
-            self.current_position : self.current_position+self.B
-            ].to(self.device) # (64, 80, 101)
-        
-        # Labels
-        y = self.labels[
-            self.current_position : self.current_position+self.B
-            ].to(self.device)
-
-       # advance the current position in the spectrograms and labels tensors
-        self.current_position += self.B * self.num_processes
-
-        # if loading the next batch would be out of bounds, move to next shard
-        if (
-            self.current_position
-            + (self.B * self.num_processes + 1)
-            > len(self.spectrograms)
-        ):
-
-            self.current_shard = (
-                (self.current_shard + 1) % len(self.audio_shards)
-            )
-            self.spectrograms = torch.load(
-                self.audio_shards[self.current_shard], 
-                map_location=self.device, 
-                weights_only=True)
-            self.labels = torch.load(
-                self.label_shards[self.current_shard],
-                  map_location=self.device, 
-                  weights_only=True).to(dtype=torch.long)
-            self.current_position = self.B * self.process_rank
-
-        return encoder_x, y
+    return model, raw_model

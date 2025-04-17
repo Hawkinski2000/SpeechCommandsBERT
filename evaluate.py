@@ -1,6 +1,6 @@
 import torch
 import os
-from model import DataLoader
+from dataloader import DataLoader
 import torch.distributed as dist
 import numpy as np
 from sklearn.metrics import ConfusionMatrixDisplay, classification_report, accuracy_score

@@ -2,7 +2,7 @@ import torch
 import math
 import os
 import time
-from model import DataLoader
+from dataloader import DataLoader
 import torch.distributed as dist
 import matplotlib.pyplot as plt
 
