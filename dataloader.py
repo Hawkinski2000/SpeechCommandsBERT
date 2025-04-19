@@ -41,9 +41,9 @@ class DataLoader:
         
         if master_process:
             print(f"found {len(self.audio_shards)} "
-                  "audio shards for {split} split")
+                  f"audio shards for {split} split")
             print(f"found {len(self.label_shards)} "
-                  "label shards for {split} split")
+                  f"label shards for {split} split")
         
         self.reset()
 

@@ -1,8 +1,9 @@
 from ddp import setup_ddp, destroy_ddp
 from config import EncoderConfig
 from model import build_model
-from train import train
+from train import Trainer
 from evaluate import evaluate
+from tune import Tuner 
 
 
 """
@@ -19,16 +20,21 @@ torchrun command sets the env variables RANK, LOCAL_RANK, and WORLD_SIZE
 def main():
     ddp_config = setup_ddp()
 
-    choice = input(
-        "Enter 'train' to train, or 'eval' to evaluate: ")
+    choice = input("Enter 'train', 'eval', or 'tune': ")
 
     if choice == 'train':
         model, raw_model = build_model(ddp_config, EncoderConfig)
-        train(model, raw_model, ddp_config)
+        trainer = Trainer(EncoderConfig)
+        trainer.train(model, raw_model, ddp_config)
 
     if choice == 'eval':
         model, raw_model = build_model(ddp_config, EncoderConfig)
         evaluate(model, raw_model, ddp_config)
+
+    if choice == 'tune':
+        trainer = Trainer(EncoderConfig)
+        tuner = Tuner(ddp_config, trainer)
+        tuner.tune()
 
     destroy_ddp()
 

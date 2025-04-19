@@ -1,28 +1,43 @@
-import torch
+
 import os
-from dataloader import DataLoader
+
+import torch
 import torch.distributed as dist
 import numpy as np
-from sklearn.metrics import ConfusionMatrixDisplay, classification_report, accuracy_score
+from sklearn.metrics import (
+    ConfusionMatrixDisplay,
+    classification_report,
+    accuracy_score
+)
 import matplotlib.pyplot as plt
+
+from config import EncoderConfig
+from dataloader import DataLoader
 
 
 def evaluate(model, raw_model, ddp_config):
-    B = 64
+    B = EncoderConfig.B
     ddp = ddp_config["ddp"]
     device = ddp_config["device"]
     master_process = ddp_config["master_process"]
     ddp_world_size = ddp_config["ddp_world_size"]
     ddp_rank = ddp_config["ddp_rank"]
 
-    test_loader = DataLoader(B=B, process_rank=ddp_rank, num_processes=ddp_world_size, split="test", device=device, master_process=master_process)
+    test_loader = DataLoader(B=B, 
+                             process_rank=ddp_rank, 
+                             num_processes=ddp_world_size, 
+                             split="test", 
+                             device=device, 
+                             master_process=master_process)
 
     device_type = "cuda" if device.startswith("cuda") else "cpu"
 
     # Load the checkpoint if it exists
     checkpoint_path = "checkpoints/checkpoint_200.pt"
     if os.path.exists(checkpoint_path):
-        checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
+        checkpoint = torch.load(checkpoint_path, 
+                                map_location=device, 
+                                weights_only=True)
 
         # Load model parameters
         state_dict = checkpoint['model_state_dict']
@@ -43,13 +58,14 @@ def evaluate(model, raw_model, ddp_config):
     test_loader.reset()
     with torch.no_grad():
         test_loss_accum = 0.0
-        test_loss_steps = 60
+        test_loss_steps = 4074 // B # 4,074 label 0-9 examples in the test set
         y_true = []
         y_pred = []
         for _ in range(test_loss_steps):
             encoder_x, y = test_loader.next_batch()
             encoder_x, y = encoder_x.to(device), y.to(device)
-            with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+            with torch.autocast(device_type=device_type, 
+                                dtype=torch.bfloat16):
                 logits, loss = model(encoder_x, y)
             loss = loss / test_loss_steps
             test_loss_accum += loss.detach()
@@ -69,10 +85,15 @@ def evaluate(model, raw_model, ddp_config):
         accuracy = accuracy_score(y_true_filtered, y_pred_filtered)
         print(f"Accuracy: {accuracy:.2%}")
 
-        report = classification_report(y_true_filtered, y_pred_filtered, labels=list(range(10)))
+        report = classification_report(y_true_filtered,
+                                       y_pred_filtered, 
+                                       labels=list(range(10)),
+                                       zero_division=0)
         with open("classification_report.txt", "w") as f:
             f.write(f"Accuracy: {accuracy:.2%}\n\n")
             f.write(report)
 
-        ConfusionMatrixDisplay.from_predictions(y_true_filtered, y_pred_filtered, labels=list(range(10)))
+        ConfusionMatrixDisplay.from_predictions(y_true_filtered, 
+                                                y_pred_filtered, 
+                                                labels=list(range(10)))
         plt.savefig(f"confusion_matrix.png")

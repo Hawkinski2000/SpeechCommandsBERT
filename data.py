@@ -39,7 +39,7 @@ def load_split(split):
     # Use a total of 10 shards each for spectrograms and their labels
     shard_size = int(np.ceil(len(ds) / 10))
 
-    print(f"Number of examples for each class in {split} split: {list(Counter(ds["label"]).values())}")
+    print(f"Number of examples for each class in {split} split: {list(Counter(ds['label']).values())}")
 
     return ds, shard_size
 
