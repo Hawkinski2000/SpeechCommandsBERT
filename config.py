@@ -18,3 +18,4 @@ class EncoderConfig:
     resid_pdrop: float = 0.3513009705241147 # residual dropout
     mlp_pdrop: float = 0.3587858310392814 # mlp dropout
     max_lr: float = 0.0028408216514440683 # max learning rate
+    weight_decay: float = 0.1 # weight decay
