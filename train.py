@@ -17,7 +17,7 @@ class Trainer():
         self.min_lr = self.max_lr * 0.1
         self.weight_decay = config.weight_decay
         self.max_steps = 201
-        self.warmup_steps = self.max_steps * config.warm_rate
+        self.warmup_steps = self.max_steps * config.warmup_ratio
         self.checkpoint_path = "checkpoints/checkpoint_1000.pt"
 
     def get_lr(self, it):
