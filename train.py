@@ -12,12 +12,13 @@ from dataloader import DataLoader
 class Trainer():
     def __init__(self, config):
         self.config = config
+        self.B = config.B
         self.max_lr = config.max_lr
         self.min_lr = self.max_lr * 0.1
-        self.warmup_steps = 20
+        self.weight_decay = config.weight_decay
         self.max_steps = 201
-        self.B = config.B
-        self.checkpoint_path = "checkpoints/checkpoint_200.pt"
+        self.warmup_steps = self.max_steps * config.warm_rate
+        self.checkpoint_path = "checkpoints/checkpoint_1000.pt"
 
     def get_lr(self, it):
         # 1) linear warmup for warmup_iters steps
@@ -85,8 +86,8 @@ class Trainer():
 
         device_type = "cuda" if device.startswith("cuda") else "cpu"
         # optimize!
-        optimizer = raw_model.configure_optimizers(weight_decay=0.1,
-                                                   learning_rate=18e-4,
+        optimizer = raw_model.configure_optimizers(weight_decay=self.weight_decay,
+                                                   learning_rate=self.max_lr,
                                                    device_type=device_type)
 
         # Load the checkpoint if it exists, otherwise train from scratch

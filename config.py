@@ -10,13 +10,13 @@ class EncoderConfig:
     n_classes: int = 36 # number of speech command classes
 
     # Tuned hyperparameters
+    n_layer: int = 2 # number of layers
+    n_head: int = 8 # number of heads
     n_embd: int = 512 # embedding dimension
-    n_layer: int = 4 # number of layers
-    n_head: int = 4 # number of heads
-    B: int = 64 # batch size
-    attn_pdrop: float = 0.1 # attention dropout
-    resid_pdrop: float = 0.1 # residual dropout
-    mlp_pdrop: float = 0.1 # mlp dropout
-    max_lr: float = 0.0018
+    B: int = 16 # batch size
+    attn_pdrop: float = 0.3668828881050512 # attention dropout
+    resid_pdrop: float = 0.3513009705241147 # residual dropout
+    mlp_pdrop: float = 0.3587858310392814 # mlp dropout
+    max_lr: float = 0.0028408216514440683 # max learning rate
     weight_decay: float = 0.1 # weight decay
     warmup_ratio: float = 0.1 # warmup ratio (% of max steps)
