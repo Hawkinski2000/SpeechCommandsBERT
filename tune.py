@@ -22,6 +22,7 @@ class Tuner:
         mlp_pdrop = trial.suggest_float('mlp_pdrop', 0, 0.5)
         max_lr = trial.suggest_float('max_lr', 3e-4, 3e-3)
         weight_decay = trial.suggest_float('weight_decay', 0.001, 0.1)
+        warmup_ratio = trial.suggest_float('warmup_ratio', 0.001, 0.2)
 
         config = EncoderConfig(n_layer=n_layer,
                             n_head=n_head,
@@ -31,7 +32,8 @@ class Tuner:
                             resid_pdrop=resid_pdrop,
                             mlp_pdrop=mlp_pdrop,
                             max_lr=max_lr,
-                            weight_decay=weight_decay)
+                            weight_decay=weight_decay,
+                            warmup_ratio=warmup_ratio)
         
         model, raw_model = build_model(self.ddp_config, config)
 
